@@ -2,6 +2,10 @@
 //!
 //! SF Symbols rendering for GPUI applications on macOS.
 //!
+//! **Platform support: macOS only.** SF Symbols are an Apple platform API and
+//! are rendered through AppKit. This crate intentionally fails to compile on
+//! any other target.
+//!
 //! This crate provides two levels of API:
 //!
 //! 1. **`SfSymbol`** - Low-level builder for rendering SF Symbols to raw RGBA pixels
@@ -53,6 +57,12 @@
 //!         .child(Icon::from_name(AppIcon::Heart).text_color(0xFF0000))
 //! }
 //! ```
+
+#[cfg(not(target_os = "macos"))]
+compile_error!(
+    "gpui-symbols only supports macOS: SF Symbols are an Apple platform API \
+     rendered through AppKit and cannot be provided on this target."
+);
 
 mod platform;
 mod symbol;

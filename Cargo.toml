@@ -7,7 +7,7 @@ documentation = "https://docs.rs/gpui-symbols"
 homepage = "https://gpui.dev"
 repository = "https://github.com/AprilNEA/gpui-symbols"
 license = "MIT OR Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "gpui_symbols"
@@ -21,18 +21,33 @@ required-features = ["component"]
 [features]
 default = ["component", "presets", "cache"]
 gpui = ["dep:gpui", "dep:smallvec", "dep:image"]
-component = ["gpui"]
+component = ["gpui", "dep:log"]
 presets = ["dep:sfsymbols", "sfsymbols/all", "sfsymbols/unified"]
 cache = ["gpui"]
 
 [dependencies]
 gpui = { version = "0.2.2", default-features = false, optional = true }
-smallvec = { version = "1.13", optional = true }
-image = { version = "0.25", optional = true }
-sfsymbols = { version = "0.2.1", default-features = false, optional = true }
+smallvec = { version = "1.15.2", optional = true }
+image = { version = "0.25.10", optional = true }
+sfsymbols = { version = "0.2.1", path = "sfsymbols", default-features = false, optional = true }
+log = { version = "0.4", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc = "0.2"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "NSString",
+    "NSGeometry",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "objc2-core-foundation",
+    "NSImage",
+    "NSColor",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSBitmapImageRep",
+    "NSImageRep",
+    "NSFontDescriptor",
+] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

@@ -6,9 +6,9 @@ authors = ["AprilNEA <dev@aprilnea.com> (https://aprilnea.me)"]
 documentation = "https://docs.rs/gpui-sfsymbols"
 repository = "https://github.com/AprilNEA/gpui-symbols"
 license = "MIT OR Apache-2.0"
-edition = "2021"
+edition = "2024"
 keywords = ["sf-symbols", "gpui", "macos", "icons", "apple"]
 categories = ["gui", "os::macos-apis"]
 
 [dependencies]
-gpui-symbols = { version = "0.3", default-features = true }
+gpui-symbols = { version = "0.6", path = ".." }

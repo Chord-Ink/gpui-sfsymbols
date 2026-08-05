@@ -15,6 +15,7 @@ struct CacheKey {
     size_bits: u32,
     scale_bits: u32,
     color: u32,
+    alpha_bits: u32,
     weight: u8,
     symbol_scale: u8,
     rendering_mode: u8,
@@ -27,6 +28,7 @@ impl CacheKey {
         size: f32,
         scale: f32,
         color: u32,
+        alpha: f32,
         weight: SymbolWeight,
         symbol_scale: SymbolScale,
         rendering_mode: RenderingMode,
@@ -36,6 +38,7 @@ impl CacheKey {
             size_bits: size.to_bits(),
             scale_bits: scale.to_bits(),
             color,
+            alpha_bits: alpha.to_bits(),
             weight: weight as u8,
             symbol_scale: symbol_scale as u8,
             rendering_mode: rendering_mode as u8,
@@ -51,6 +54,14 @@ type SymbolCache = HashMap<CacheKey, (std::sync::Arc<gpui::RenderImage>, u32, u3
 #[cfg(feature = "cache")]
 static SYMBOL_CACHE: OnceLock<Mutex<SymbolCache>> = OnceLock::new();
 
+/// Maximum number of entries in the global symbol cache.
+///
+/// Each entry pins a full RGBA frame, so an unbounded cache lets long-running
+/// apps grow memory without limit (the key includes caller-controlled name,
+/// size, and scale). When the cap is reached, an arbitrary entry is evicted.
+#[cfg(feature = "cache")]
+const MAX_CACHE_ENTRIES: usize = 256;
+
 #[cfg(feature = "cache")]
 fn get_cache() -> &'static Mutex<SymbolCache> {
     SYMBOL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -61,10 +72,10 @@ fn get_cache() -> &'static Mutex<SymbolCache> {
 /// Call this if you need to free memory or if system appearance changed.
 #[cfg(feature = "cache")]
 pub fn clear_cache() {
-    if let Some(cache) = SYMBOL_CACHE.get() {
-        if let Ok(mut guard) = cache.lock() {
-            guard.clear();
-        }
+    if let Some(cache) = SYMBOL_CACHE.get()
+        && let Ok(mut guard) = cache.lock()
+    {
+        guard.clear();
     }
 }
 
@@ -156,7 +167,8 @@ pub enum RenderingMode {
     /// Hierarchical coloring with primary color and automatic opacity layers
     #[default]
     Hierarchical,
-    /// Multiple colors (requires palette colors, falls back to hierarchical)
+    /// Multiple colors (requires palette colors; with the single-color builder
+    /// API this intentionally renders like [`RenderingMode::Hierarchical`])
     Palette,
     /// Original multicolor design of the symbol
     Multicolor,
@@ -200,6 +212,7 @@ pub struct SfSymbol {
     size: f32,
     scale: f32,
     color: u32,
+    alpha: f32,
     weight: SymbolWeight,
     symbol_scale: SymbolScale,
     rendering_mode: RenderingMode,
@@ -215,6 +228,7 @@ impl SfSymbol {
             size: 32.0,
             scale: 2.0,
             color: 0x000000, // black
+            alpha: 1.0,
             weight: SymbolWeight::default(),
             symbol_scale: SymbolScale::default(),
             rendering_mode: RenderingMode::default(),
@@ -222,12 +236,18 @@ impl SfSymbol {
     }
 
     /// Set the point size of the symbol (default: 32.0).
+    ///
+    /// Must be finite and within `0 < size <= 1024`; invalid values make
+    /// rendering return `None`.
     pub fn size(mut self, size: f32) -> Self {
         self.size = size;
         self
     }
 
     /// Set the scale factor for rendering (default: 2.0 for Retina).
+    ///
+    /// Must be finite and within `0 < scale <= 8`; invalid values make
+    /// rendering return `None`.
     pub fn scale(mut self, scale: f32) -> Self {
         self.scale = scale;
         self
@@ -244,6 +264,23 @@ impl SfSymbol {
     /// ```
     pub fn color(mut self, color: u32) -> Self {
         self.color = color;
+        self
+    }
+
+    /// Set the opacity of the symbol color (default: 1.0).
+    ///
+    /// Values are clamped to `0.0 - 1.0`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// SfSymbol::new("star.fill")
+    ///     .color(0xFF0000)
+    ///     .alpha(0.5)  // 50% opacity red
+    ///     .render();
+    /// ```
+    pub fn alpha(mut self, alpha: f32) -> Self {
+        self.alpha = alpha;
         self
     }
 
@@ -305,13 +342,18 @@ impl SfSymbol {
 
     /// Render to raw RGBA pixel data.
     ///
-    /// Returns `(width, height, rgba_data)` or `None` if rendering fails.
+    /// Pixels are straight (non-premultiplied) alpha in the sRGB color space.
+    ///
+    /// Returns `(width, height, rgba_data)` or `None` if rendering fails
+    /// (unknown symbol or invalid parameters — see [`SfSymbol::size`] and
+    /// [`SfSymbol::scale`]).
     pub fn render_rgba(&self) -> Option<(u32, u32, Vec<u8>)> {
         platform::render_sf_symbol(
             &self.name,
             self.size,
             self.scale,
             self.color,
+            self.alpha,
             self.weight,
             self.symbol_scale,
             self.rendering_mode,
@@ -350,6 +392,7 @@ impl SfSymbol {
             self.size,
             self.scale,
             self.color,
+            self.alpha,
             self.weight,
             self.symbol_scale,
             self.rendering_mode,
@@ -358,10 +401,10 @@ impl SfSymbol {
         // Check cache first
         {
             let cache = get_cache();
-            if let Ok(guard) = cache.lock() {
-                if let Some((cached, w, h)) = guard.get(&cache_key) {
-                    return Some((Arc::clone(cached), *w, *h));
-                }
+            if let Ok(guard) = cache.lock()
+                && let Some((cached, w, h)) = guard.get(&cache_key)
+            {
+                return Some((Arc::clone(cached), *w, *h));
             }
         }
 
@@ -375,10 +418,16 @@ impl SfSymbol {
         let frame = Frame::new(rgba_image);
         let image = Arc::new(RenderImage::new(smallvec![frame]));
 
-        // Store in cache
+        // Store in cache, bounded: evict an arbitrary entry when full so the
+        // cache (and the RenderImages it pins) cannot grow without limit.
         {
             let cache = get_cache();
             if let Ok(mut guard) = cache.lock() {
+                if guard.len() >= MAX_CACHE_ENTRIES
+                    && let Some(victim) = guard.keys().next().cloned()
+                {
+                    guard.remove(&victim);
+                }
                 guard.insert(cache_key, (Arc::clone(&image), width, height));
             }
         }
@@ -420,6 +469,9 @@ impl SfSymbol {
 }
 
 /// Convert RGBA to BGRA (required by GPUI's Metal renderer).
+///
+/// The pixel data from AppKit is straight (non-premultiplied) alpha — exactly
+/// what GPUI expects — so only the channel order needs fixing.
 #[cfg(feature = "gpui")]
 fn rgba_to_bgra(data: &mut [u8]) {
     for pixel in data.chunks_exact_mut(4) {
@@ -436,15 +488,15 @@ mod tests {
         let symbol = SfSymbol::new("star.fill")
             .size(48.0)
             .scale(3.0)
-            .color(0xFF0000);
+            .color(0xFF0000)
+            .alpha(0.5);
         assert_eq!(symbol.size, 48.0);
         assert_eq!(symbol.scale, 3.0);
         assert_eq!(symbol.color, 0xFF0000);
+        assert_eq!(symbol.alpha, 0.5);
     }
 
     #[test]
-    #[ignore = "requires GUI environment"]
-    #[cfg(target_os = "macos")]
     fn test_render_rgba() {
         let result = SfSymbol::new("star.fill").render_rgba();
         assert!(result.is_some());
@@ -456,24 +508,88 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires GUI environment"]
-    #[cfg(target_os = "macos")]
     fn test_invalid_symbol() {
         let result = SfSymbol::new("this.symbol.does.not.exist.12345").render_rgba();
         assert!(result.is_none());
     }
 
     #[test]
-    #[ignore = "requires GUI environment"]
-    #[cfg(target_os = "macos")]
     fn test_custom_color() {
         let result = SfSymbol::new("star.fill").color(0xFF0000).render_rgba();
         assert!(result.is_some());
     }
 
+    /// Regression test: absurd/invalid size and scale values must return
+    /// `None`, not panic on integer overflow or trigger huge allocations.
     #[test]
-    #[ignore = "requires GUI environment"]
-    #[cfg(all(target_os = "macos", feature = "gpui"))]
+    fn test_invalid_size_and_scale_rejected() {
+        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1e9] {
+            assert!(
+                SfSymbol::new("star.fill").size(bad).render_rgba().is_none(),
+                "size({bad}) should be rejected"
+            );
+            assert!(
+                SfSymbol::new("star.fill").scale(bad).render_rgba().is_none(),
+                "scale({bad}) should be rejected"
+            );
+        }
+    }
+
+    /// Regression test: pixel data must be straight (non-premultiplied) alpha.
+    /// For a fully-saturated red symbol, translucent pixels keep full red
+    /// (r=255) regardless of alpha; premultiplied data would have r <= a.
+    #[test]
+    fn test_straight_alpha_pixels() {
+        let (_w, _h, data) = SfSymbol::new("star.fill")
+            .size(64.0)
+            .color(0xFF0000)
+            .render_rgba()
+            .unwrap();
+        let has_translucent = data
+            .chunks_exact(4)
+            .any(|px| px[3] > 0 && px[3] < 255);
+        assert!(has_translucent, "expected some translucent pixels");
+        assert!(
+            data.chunks_exact(4)
+                .any(|px| px[3] > 0 && px[3] < 255 && px[0] > px[3]),
+            "translucent pixels must not be premultiplied (r should exceed a)"
+        );
+    }
+
+    /// The color alpha must reach the rendered pixels.
+    #[test]
+    fn test_alpha_applied() {
+        let (_w, _h, data) = SfSymbol::new("star.fill")
+            .color(0xFF0000)
+            .alpha(0.5)
+            .render_rgba()
+            .unwrap();
+        let max_alpha = data.chunks_exact(4).map(|px| px[3]).max().unwrap();
+        assert!(
+            max_alpha <= 140,
+            "50% opacity should cap alpha near 128, got {max_alpha}"
+        );
+    }
+
+    #[cfg(feature = "cache")]
+    #[test]
+    fn test_cache_is_bounded() {
+        clear_cache();
+        for i in 0..(MAX_CACHE_ENTRIES + 10) {
+            let _ = SfSymbol::new("star.fill")
+                .size(8.0 + i as f32 * 0.25)
+                .render_with_size();
+        }
+        assert!(
+            cache_size() <= MAX_CACHE_ENTRIES,
+            "cache grew past its cap: {}",
+            cache_size()
+        );
+        clear_cache();
+    }
+
+    #[test]
+    #[cfg(feature = "gpui")]
     fn test_render_gpui() {
         let result = SfSymbol::new("star.fill").render();
         assert!(result.is_some());

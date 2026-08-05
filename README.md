@@ -196,13 +196,14 @@ Low-level builder for rendering SF Symbols.
 | Method | Description | Default |
 |--------|-------------|---------|
 | `new(name)` | Create symbol with name | - |
-| `size(f32)` | Point size | 32.0 |
-| `scale(f32)` | Scale factor (Retina) | 2.0 |
+| `size(f32)` | Point size (`0 < size <= 1024`) | 32.0 |
+| `scale(f32)` | Scale factor (`0 < scale <= 8`; Retina) | 2.0 |
 | `color(u32)` | RGB hex color | 0x000000 |
+| `alpha(f32)` | Color opacity (`0.0 - 1.0`) | 1.0 |
 | `weight(SymbolWeight)` | Symbol weight | Regular |
 | `symbol_scale(SymbolScale)` | Symbol scale | Medium |
 | `rendering_mode(RenderingMode)` | Rendering mode | Hierarchical |
-| `render_rgba()` | Render to `(width, height, Vec<u8>)` | - |
+| `render_rgba()` | Render to `(width, height, Vec<u8>)` (straight alpha, sRGB) | - |
 | `render()` | Render to `Arc<RenderImage>` (requires `gpui` feature) | - |
 
 ### `Icon`
@@ -230,7 +231,7 @@ High-level GPUI component (requires `component` feature).
 
 ### Cache Management
 
-With the `cache` feature (enabled by default), rendered symbols are cached globally for performance:
+With the `cache` feature (enabled by default), rendered symbols are cached globally for performance. The cache is bounded to 256 entries (an arbitrary entry is evicted when full), so long-running apps cannot grow it without limit:
 
 ```rust
 use gpui_symbols::{cache_size, clear_cache};
@@ -254,8 +255,13 @@ clear_cache();
 
 ## Requirements
 
-- macOS 11.0+ (SF Symbols support)
-- Rust 1.75+
+- **macOS only** — SF Symbols are an Apple platform API rendered through
+  AppKit; this crate intentionally fails to compile on other targets.
+- macOS 11.0+ baseline (SF Symbols support). Colored rendering modes
+  (`Hierarchical`, `Palette`) require macOS 12.0+, `Monochrome` requires
+  macOS 13.0+ — on older systems rendering degrades gracefully to the
+  uncolored symbol instead of crashing.
+- Rust 1.85+ (edition 2024)
 
 ## Examples
 

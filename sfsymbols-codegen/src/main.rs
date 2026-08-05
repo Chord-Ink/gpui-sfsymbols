@@ -20,7 +20,10 @@ const RUST_KEYWORDS: &[&str] = &[
 fn year_to_version(year: &str) -> Option<(u32, u32)> {
     let parts: Vec<&str> = year.split('.').collect();
     let base_year = parts.first()?;
-    let minor = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    let minor = parts
+        .get(1)
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
 
     let major = match *base_year {
         "2019" => 1,
@@ -98,9 +101,12 @@ struct UnifiedSymbol {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Default: read from SF Symbols.app (requires installing from App Store)
     let plist_path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/Applications/SF Symbols.app/Contents/Resources/Metadata/name_availability.plist".to_string()
+        "/Applications/SF Symbols.app/Contents/Resources/Metadata/name_availability.plist"
+            .to_string()
     });
-    let output_dir = std::env::args().nth(2).unwrap_or_else(|| "../sfsymbols/src".to_string());
+    let output_dir = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "../sfsymbols/src".to_string());
 
     println!("Reading plist from: {}", plist_path);
 
@@ -117,15 +123,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut by_minor: BTreeMap<(u32, u32), Vec<Symbol>> = BTreeMap::new();
 
     for (name, value) in symbols_dict {
-        if let Some(year_str) = value.as_string() {
-            if let Some(version) = year_to_version(year_str) {
-                let rust_name = to_rust_identifier(name);
-                let symbol = Symbol {
-                    name: name.clone(),
-                    rust_name,
-                };
-                by_minor.entry(version).or_default().push(symbol);
-            }
+        if let Some(year_str) = value.as_string()
+            && let Some(version) = year_to_version(year_str)
+        {
+            let rust_name = to_rust_identifier(name);
+            let symbol = Symbol {
+                name: name.clone(),
+                rust_name,
+            };
+            by_minor.entry(version).or_default().push(symbol);
         }
     }
 
@@ -233,7 +239,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "\n/// Alias for the latest SF Symbols version (SfSymbolV{})\n",
             latest
         ));
-        lib.push_str(&format!("#[cfg(all(feature = \"v{}\", not(feature = \"unified\")))]\n", latest));
+        lib.push_str(&format!(
+            "#[cfg(all(feature = \"v{}\", not(feature = \"unified\")))]\n",
+            latest
+        ));
         lib.push_str(&format!("pub type SfSymbol = SfSymbolV{};\n", latest));
     }
 

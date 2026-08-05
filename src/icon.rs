@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    img, px, rgb, App, Hsla, ImageSource, IntoElement, Pixels, Rgba, RenderImage, SharedString,
-    Styled, Window,
+    App, Hsla, ImageSource, IntoElement, Pixels, RenderImage, Rgba, SharedString, Styled, Window,
+    img, px, rgb,
 };
 
 use crate::{RenderingMode, SfSymbol, SymbolScale, SymbolWeight};
@@ -132,7 +132,8 @@ impl Icon {
         self
     }
 
-    /// Alias for [`Icon::size`] for backward compatibility.
+    /// Alias for [`Icon::size`].
+    #[deprecated(note = "use `Icon::size` instead")]
     #[inline]
     pub fn with_size(mut self, size: Pixels) -> Self {
         self.size = size;
@@ -142,7 +143,8 @@ impl Icon {
     /// Set the color of the icon using any type that converts to [`Hsla`].
     ///
     /// Accepts GPUI color types: `Hsla`, `Rgba`, or use helper functions like
-    /// `gpui::rgb(0xFF0000)`, `gpui::hsla(h, s, l, a)`.
+    /// `gpui::rgb(0xFF0000)`, `gpui::hsla(h, s, l, a)`. The color's alpha
+    /// (opacity) is honored.
     ///
     /// # Example
     ///
@@ -150,7 +152,7 @@ impl Icon {
     /// use gpui::{rgb, hsla};
     ///
     /// Icon::new("star.fill").color(rgb(0xFF0000));
-    /// Icon::new("heart.fill").color(hsla(0.0, 1.0, 0.5, 1.0));
+    /// Icon::new("heart.fill").color(hsla(0.0, 1.0, 0.5, 0.5)); // 50% opacity
     /// ```
     pub fn color(mut self, color: impl Into<Hsla>) -> Self {
         self.color = color.into();
@@ -222,19 +224,24 @@ impl Icon {
 
     /// Render the icon to an image with its actual dimensions.
     ///
+    /// `scale_factor` is the display scale of the target window (e.g. 2.0 for
+    /// Retina) so the raster matches the screen the icon is shown on.
+    ///
     /// Returns `(image, width, height)` where width and height are the actual
     /// rendered pixel dimensions (may not be square).
-    fn render_image(&self) -> Option<(Arc<RenderImage>, u32, u32)> {
+    fn render_image(&self, scale_factor: f32) -> Option<(Arc<RenderImage>, u32, u32)> {
         let size: f32 = self.size.into();
-        // Convert Hsla -> Rgba -> u32 (RGB only, ignore alpha for now)
+        // Convert Hsla -> Rgba -> 0xRRGGBBAA, split into RGB and opacity.
         let rgba: Rgba = self.color.into();
         let color_u32: u32 = rgba.into();
-        // Shift from RGBA to RGB format (drop alpha byte)
         let rgb = color_u32 >> 8;
+        let alpha = (color_u32 & 0xFF) as f32 / 255.0;
 
         SfSymbol::new(self.name.as_ref())
             .size(size)
+            .scale(scale_factor)
             .color(rgb)
+            .alpha(alpha)
             .weight(self.weight)
             .symbol_scale(self.symbol_scale)
             .rendering_mode(self.rendering_mode)
@@ -243,27 +250,36 @@ impl Icon {
 }
 
 impl gpui::RenderOnce for Icon {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let target_size: f32 = self.size.into();
+        let scale_factor = window.scale_factor();
 
-        if let Some((image, width, height)) = self.render_image() {
-            // Calculate display size preserving aspect ratio
-            // The target_size represents the maximum dimension (height for most icons)
-            let aspect_ratio = width as f32 / height as f32;
-            let (display_width, display_height) = if aspect_ratio >= 1.0 {
-                // Wider than tall: width is the constraining dimension
-                (target_size, target_size / aspect_ratio)
-            } else {
-                // Taller than wide: height is the constraining dimension
-                (target_size * aspect_ratio, target_size)
-            };
+        match self.render_image(scale_factor) {
+            Some((image, width, height)) => {
+                // Calculate display size preserving aspect ratio
+                // The target_size represents the maximum dimension (height for most icons)
+                let aspect_ratio = width as f32 / height as f32;
+                let (display_width, display_height) = if aspect_ratio >= 1.0 {
+                    // Wider than tall: width is the constraining dimension
+                    (target_size, target_size / aspect_ratio)
+                } else {
+                    // Taller than wide: height is the constraining dimension
+                    (target_size * aspect_ratio, target_size)
+                };
 
-            img(ImageSource::Render(image))
-                .w(px(display_width))
-                .h(px(display_height))
-                .into_any_element()
-        } else {
-            gpui::Empty.into_any_element()
+                img(ImageSource::Render(image))
+                    .w(px(display_width))
+                    .h(px(display_height))
+                    .into_any_element()
+            }
+            _ => {
+                log::warn!(
+                    "gpui-symbols: failed to render SF Symbol {:?} \
+                     (unknown name or invalid parameters)",
+                    self.name
+                );
+                gpui::Empty.into_any_element()
+            }
         }
     }
 }

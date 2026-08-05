@@ -88,7 +88,11 @@ impl Render for SfSymbolsView {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(div().text_base().child("Using Icon::from_name() with enum:"))
+                    .child(
+                        div()
+                            .text_base()
+                            .child("Using Icon::from_name() with enum:"),
+                    )
                     .child(
                         div()
                             .flex()
@@ -124,7 +128,11 @@ impl Render for SfSymbolsView {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(div().text_base().child("Non-square symbols (aspect ratio preserved):"))
+                    .child(
+                        div()
+                            .text_base()
+                            .child("Non-square symbols (aspect ratio preserved):"),
+                    )
                     .child(
                         div()
                             .flex()
@@ -170,7 +178,7 @@ impl RenderOnce for IconCard {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(Icon::new(self.name).with_size(px(32.))),
+                    .child(Icon::new(self.name).size(px(32.))),
             )
             .child(div().text_sm().text_color(rgb(0x666666)).child(self.label))
     }
@@ -206,7 +214,7 @@ impl RenderOnce for EnumIconCard {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(Icon::from_name(self.icon).with_size(px(32.))),
+                    .child(Icon::from_name(self.icon).size(px(32.))),
             )
             .child(div().text_sm().text_color(rgb(0x666666)).child(self.label))
     }
@@ -245,7 +253,7 @@ impl RenderOnce for ColoredIconCard {
                     .justify_center()
                     .child(
                         Icon::new(self.name)
-                            .with_size(px(32.))
+                            .size(px(32.))
                             .text_color(self.color),
                     ),
             )
@@ -285,7 +293,7 @@ impl RenderOnce for AspectRatioCard {
                     .items_center()
                     .justify_center()
                     // Icons preserve their natural aspect ratio
-                    .child(Icon::new(self.name).with_size(px(32.))),
+                    .child(Icon::new(self.name).size(px(32.))),
             )
             .child(div().text_sm().text_color(rgb(0x666666)).child(self.label))
     }
