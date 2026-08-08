@@ -14,8 +14,8 @@ authors = ["AprilNEA <dev@aprilnea.com> (https://aprilnea.me)"]
 repository = "https://github.com/Chord-Ink/gpui-sfsymbols"
 
 [workspace.dependencies]
-gpui = { git = "ssh://git@github.com/Chord-Ink/gpui.git" }
-gpui_platform = { git = "ssh://git@github.com/Chord-Ink/gpui.git", features = ["font-kit"] }
+gpui = { git = "https://github.com/Chord-Ink/gpui" }
+gpui_platform = { git = "https://github.com/Chord-Ink/gpui", features = ["font-kit"] }
 smallvec = "1.15.2"
 image = "0.25.10"
 log = "0.4"
