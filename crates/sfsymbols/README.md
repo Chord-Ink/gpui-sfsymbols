@@ -20,8 +20,8 @@ let name = SfSymbol::StarFill.name();  // "star.fill"
 // Or use a specific version
 let name = SfSymbolV7::HeartFill.name();  // "heart.fill"
 
-// Works with gpui-symbols
-use gpui_symbols::Icon;
+// Works with gpui-sfsymbols
+use gpui_sfsymbols::Icon;
 let icon = Icon::new(SfSymbol::StarFill.name());
 ```
 

@@ -104,9 +104,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/Applications/SF Symbols.app/Contents/Resources/Metadata/name_availability.plist"
             .to_string()
     });
-    let output_dir = std::env::args()
-        .nth(2)
-        .unwrap_or_else(|| "../sfsymbols/src".to_string());
+    let output_dir = std::env::args().nth(2).unwrap_or_else(|| {
+        // Default to the sibling sfsymbols crate, resolved from this crate's
+        // manifest dir so `cargo run -p sfsymbols-codegen` works from anywhere
+        // in the workspace.
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../sfsymbols/src")
+            .to_string_lossy()
+            .into_owned()
+    });
 
     println!("Reading plist from: {}", plist_path);
 

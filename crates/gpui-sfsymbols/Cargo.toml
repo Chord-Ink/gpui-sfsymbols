@@ -1,0 +1,44 @@
+[package]
+name = "gpui-sfsymbols"
+version = "0.6.1"
+description = "Native SF Symbols for GPUI with type-safe Icon component"
+documentation = "https://docs.rs/gpui-sfsymbols"
+homepage = "https://gpui.dev"
+readme = "../../README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[example]]
+name = "gallery"
+path = "examples/gallery.rs"
+required-features = ["component"]
+
+[features]
+default = ["component", "presets", "cache"]
+gpui = ["dep:gpui", "dep:smallvec", "dep:image"]
+component = ["gpui", "dep:log"]
+presets = ["dep:sfsymbols", "sfsymbols/all", "sfsymbols/unified"]
+cache = ["gpui"]
+
+[dependencies]
+gpui = { workspace = true, optional = true }
+smallvec = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+sfsymbols = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Provides `application()`, which builds an `Application` on the current
+# platform (gpui itself only exposes `Application::with_platform`).
+gpui_platform.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

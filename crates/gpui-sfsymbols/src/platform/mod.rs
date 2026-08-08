@@ -7,4 +7,4 @@
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::render_sf_symbol;
+pub(crate) use macos::{MAX_PALETTE_COLORS, RenderParams, render_sf_symbol};

@@ -1,0 +1,14 @@
+[package]
+name = "sfsymbols-codegen"
+version = "0.1.0"
+description = "Code generator for the sfsymbols crate (development tool)"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+plist = "1.6"
+heck = "0.5"

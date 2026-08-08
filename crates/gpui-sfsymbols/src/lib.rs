@@ -1,4 +1,4 @@
-//! # gpui-symbols
+//! # gpui-sfsymbols
 //!
 //! SF Symbols rendering for GPUI applications on macOS.
 //!
@@ -22,7 +22,7 @@
 //! ## Example: Using SfSymbol
 //!
 //! ```rust,ignore
-//! use gpui_symbols::SfSymbol;
+//! use gpui_sfsymbols::SfSymbol;
 //!
 //! // Render to raw RGBA pixels
 //! let (width, height, data) = SfSymbol::new("star.fill")
@@ -38,7 +38,7 @@
 //! ## Example: Using Icon Component
 //!
 //! ```rust,ignore
-//! use gpui_symbols::{Icon, define_icons};
+//! use gpui_sfsymbols::{Icon, define_icons};
 //! use gpui::px;
 //!
 //! // Define your own icon enum
@@ -54,16 +54,18 @@
 //! fn view(window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 //!     div()
 //!         .child(Icon::new("star.fill"))
-//!         .child(Icon::from_name(AppIcon::Heart).text_color(0xFF0000))
+//!         .child(Icon::from_name(AppIcon::Heart).color(gpui::rgb(0xFF0000)))
 //! }
 //! ```
 
 #[cfg(not(target_os = "macos"))]
 compile_error!(
-    "gpui-symbols only supports macOS: SF Symbols are an Apple platform API \
+    "gpui-sfsymbols only supports macOS: SF Symbols are an Apple platform API \
      rendered through AppKit and cannot be provided on this target."
 );
 
+mod color;
+mod effect;
 mod platform;
 mod symbol;
 
@@ -71,6 +73,8 @@ mod symbol;
 mod icon;
 
 // Re-export main types
+pub use color::SymbolColor;
+pub use effect::{Animate, Direction, Repeat, SymbolEffect, SymbolFrame};
 pub use symbol::{RenderingMode, SfSymbol, SymbolScale, SymbolWeight};
 
 // Re-export cache functions

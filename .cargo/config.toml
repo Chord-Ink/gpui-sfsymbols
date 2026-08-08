@@ -7,3 +7,7 @@
 #
 # To find your SDK path: xcrun --show-sdk-path
 BINDGEN_EXTRA_CLANG_ARGS = "-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
+
+
+[net]
+git-fetch-with-cli = true
