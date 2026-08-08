@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/gpui-sfsymbols.svg)](https://crates.io/crates/gpui-sfsymbols)
 [![Documentation](https://docs.rs/gpui-sfsymbols/badge.svg)](https://docs.rs/gpui-sfsymbols)
-[![License](https://img.shields.io/crates/l/gpui-sfsymbols.svg)](https://github.com/AprilNEA/gpui-symbols#license)
+[![License](https://img.shields.io/crates/l/gpui-sfsymbols.svg)](https://github.com/Chord-Ink/gpui-sfsymbols#license)
 [![Downloads](https://img.shields.io/crates/d/gpui-sfsymbols.svg)](https://crates.io/crates/gpui-sfsymbols)
 
 macOS SF Symbols rendering for Rust / GPUI applications.

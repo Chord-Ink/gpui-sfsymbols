@@ -11,7 +11,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["AprilNEA <dev@aprilnea.com> (https://aprilnea.me)"]
-repository = "https://github.com/AprilNEA/gpui-symbols"
+repository = "https://github.com/Chord-Ink/gpui-sfsymbols"
 
 [workspace.dependencies]
 gpui = { git = "ssh://git@github.com/Chord-Ink/gpui.git" }
