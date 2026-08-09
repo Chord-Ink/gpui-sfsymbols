@@ -184,24 +184,17 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
         let color_config: Option<Retained<NSImageSymbolConfiguration>> = match params.rendering_mode
         {
             RenderingMode::Monochrome => {
-                let symbol_color = to_nscolor(params.color);
-                if supports_monochrome() && supports_hierarchical_color() {
-                    // Prefer the monochrome variant, tinted by the color.
-                    let mono = NSImageSymbolConfiguration::configurationPreferringMonochrome();
-                    let tint = NSImageSymbolConfiguration::configurationWithHierarchicalColor(
-                        &symbol_color,
-                    );
-                    Some(mono.configurationByApplyingConfiguration(&tint))
-                } else if supports_hierarchical_color() {
-                    // macOS 12: no monochrome-preferring configuration yet.
-                    Some(
-                        NSImageSymbolConfiguration::configurationWithHierarchicalColor(
-                            &symbol_color,
-                        ),
-                    )
-                } else {
-                    None
-                }
+                // No color configuration at all: composing a hierarchical
+                // tint over configurationPreferringMonochrome re-enables
+                // hierarchical rendering (the applied configuration wins), so
+                // secondary layers — person.2's back figure, gearshape.2's
+                // second gear — came out faded instead of flat. The symbol is
+                // drawn in its default (black) monochrome form and tinted
+                // AFTER drawing with a SourceIn fill (step 7b below), which
+                // recolors every layer uniformly, matching how AppKit treats
+                // template images.
+                supports_monochrome()
+                    .then(NSImageSymbolConfiguration::configurationPreferringMonochrome)
             }
             RenderingMode::Hierarchical => supports_hierarchical_color().then(|| {
                 NSImageSymbolConfiguration::configurationWithHierarchicalColor(&to_nscolor(
@@ -356,6 +349,15 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
             NSCompositingOperation::SourceOver,
             1.0,
         );
+
+        // 7b. Monochrome tint: recolor the drawn glyph uniformly, preserving
+        // only its alpha. SourceIn touches nothing outside the glyph, and
+        // filling `draw_rect` covers the glyph in the current (possibly
+        // rotated) coordinate space.
+        if params.rendering_mode == RenderingMode::Monochrome {
+            to_nscolor(params.color).setFill();
+            objc2_app_kit::NSRectFillUsingOperation(draw_rect, NSCompositingOperation::SourceIn);
+        }
 
         // 8. Restore context
         NSGraphicsContext::setCurrentContext(old_context.as_deref());

@@ -178,6 +178,7 @@ pub struct Icon {
     weight: SymbolWeight,
     symbol_scale: SymbolScale,
     rendering_mode: RenderingMode,
+    natural_size: bool,
     variable_value: Option<f64>,
     id: Option<ElementId>,
     effect: Option<SymbolEffect>,
@@ -201,6 +202,7 @@ impl Icon {
             weight: SymbolWeight::default(),
             symbol_scale: SymbolScale::default(),
             rendering_mode: RenderingMode::default(),
+            natural_size: false,
             variable_value: None,
             id: None,
             effect: None,
@@ -289,6 +291,20 @@ impl Icon {
     /// ```
     pub fn rendering_mode(mut self, mode: RenderingMode) -> Self {
         self.rendering_mode = mode;
+        self
+    }
+
+    /// Display the symbol at its natural rendered size instead of fitting it
+    /// into a `size()`-sided box.
+    ///
+    /// With natural sizing, `size()` is the symbol's *font point size* (as in
+    /// AppKit/SwiftUI) and the element takes the exact dimensions the symbol
+    /// configuration produces — so a 13pt symbol at [`SymbolScale::Large`]
+    /// occupies its true ~16pt box, matching how a SwiftUI `Label` lays out
+    /// its `systemImage`. Static rendering only; animated effects keep the
+    /// fitted behavior.
+    pub fn natural_size(mut self, natural: bool) -> Self {
+        self.natural_size = natural;
         self
     }
 
@@ -505,7 +521,18 @@ impl Icon {
 
         match self.render_image(scale_factor) {
             Some((image, width, height)) => {
-                sized_img(image, width, height, target_size).into_any_element()
+                if self.natural_size {
+                    // The raster is glyph-box-sized at `scale_factor`;
+                    // dividing back yields its true logical dimensions.
+                    let w = width as f32 / scale_factor;
+                    let h = height as f32 / scale_factor;
+                    img(ImageSource::Render(image))
+                        .w(px(w))
+                        .h(px(h))
+                        .into_any_element()
+                } else {
+                    sized_img(image, width, height, target_size).into_any_element()
+                }
             }
             None => self.render_failed(),
         }
