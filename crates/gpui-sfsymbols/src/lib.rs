@@ -77,6 +77,11 @@ pub use color::SymbolColor;
 pub use effect::{Animate, Direction, Repeat, SymbolEffect, SymbolFrame};
 pub use symbol::{RenderingMode, SfSymbol, SymbolScale, SymbolWeight};
 
+/// Whether this macOS can draw system symbols (macOS 11 and later).
+pub fn is_available() -> bool {
+    platform::supports_system_symbols()
+}
+
 // Re-export cache functions
 #[cfg(feature = "cache")]
 pub use symbol::{cache_size, clear_cache};

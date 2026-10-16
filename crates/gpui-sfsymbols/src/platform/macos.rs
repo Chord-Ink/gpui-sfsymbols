@@ -110,6 +110,18 @@ fn supports_monochrome() -> bool {
     })
 }
 
+/// Whether `+[NSImage imageWithSystemSymbolName:accessibilityDescription:]`
+/// is available (macOS 11.0+). Probed once, then cached.
+pub(crate) fn supports_system_symbols() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| unsafe {
+        msg_send![
+            NSImage::class(),
+            respondsToSelector: sel!(imageWithSystemSymbolName:accessibilityDescription:)
+        ]
+    })
+}
+
 /// Whether `+[NSImage imageWithSystemSymbolName:variableValue:accessibilityDescription:]`
 /// is available (macOS 14.0+, Variable Color). Probed once, then cached.
 fn supports_variable_value() -> bool {
@@ -141,6 +153,9 @@ fn to_nscolor(color: SymbolColor) -> Retained<NSColor> {
 /// Returns `Some((width, height, rgba_data))` on success, `None` on failure
 /// (unknown symbol, invalid parameters, or allocation failure).
 pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u8>)> {
+    if !supports_system_symbols() {
+        return None;
+    }
     let point_size = params.point_size;
     let scale = params.scale;
 
