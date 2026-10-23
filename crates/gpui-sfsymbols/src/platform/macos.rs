@@ -262,36 +262,6 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
         //    glyph never clips mid-rotation.
         let ns_size: NSSize = image.size();
 
-        // AppKit reports two horizontal boxes for a symbol. `size` is the
-        // drawing box, rounded up to whole points; `alignmentRect` is the
-        // unrounded box the frameworks lay the symbol out with, and it is the
-        // one SwiftUI centres. They differ by up to half a point, which is a
-        // whole device pixel at 2x — enough to put seven of the twelve glyphs
-        // in the fidelity grid one pixel left of the reference.
-        //
-        // Only the width is taken. The alignment rect's height is a cap-height
-        // band (9pt for every symbol in the grid, regardless of how tall the
-        // glyph draws), not the drawn extent, so using it vertically would
-        // clip badly — and vertical placement already matches the reference.
-        let alignment = image.alignmentRect();
-        let (layout_width, alignment_x) = if alignment.size.width > 0.0
-            && alignment.size.width <= ns_size.width
-            && ns_size.width - alignment.size.width < 1.0
-        {
-            (alignment.size.width, alignment.origin.x)
-        } else {
-            // A symbol whose alignment rect is absent or genuinely different
-            // from its drawing box is not the rounding case this corrects, so
-            // fall back to laying out the drawing box.
-            (ns_size.width, 0.0)
-        };
-
-        // The canvas keeps the *drawing* box's whole-point width. Sizing it to
-        // the alignment box instead would be self-defeating: the element would
-        // then be a half-point wide, and GPUI snaps element bounds to the
-        // device grid, so the half pixel gained by the narrower box is given
-        // straight back by the snap. Keeping whole points makes the snap a
-        // no-op and leaves the half-pixel phase to the draw origin below.
         let base_width = (ns_size.width * scale as f64).ceil();
         let base_height = (ns_size.height * scale as f64).ceil();
         if !base_width.is_finite()
@@ -386,26 +356,15 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
                 transform.concat();
                 NSRect {
                     origin: NSPoint {
-                        x: -layout_width / 2.0 - alignment_x,
+                        x: -ns_size.width / 2.0,
                         y: -ns_size.height / 2.0,
                     },
                     size: ns_size,
                 }
             }
-            // Slide the glyph right by the slack between the alignment box and
-            // the drawing box, which lands the alignment box flush against the
-            // canvas's trailing edge. Measured, not derived: rendering the
-            // fidelity grid against SwiftUI at 13pt puts the seven glyphs whose
-            // boxes differ exactly 1.0 device px left at zero shift and exactly
-            // 0.5 px left at half the slack, so the full slack is what closes
-            // it. (AppKit reports these alignment rects with `origin.x` at 0
-            // even when the slack is real, so the rect alone does not say which
-            // side the padding went.)
+            // The glyph sits where AppKit draws it, at its own size.
             None => NSRect {
-                origin: NSPoint {
-                    x: canvas_points.width - alignment_x - layout_width,
-                    y: (canvas_points.height - ns_size.height) / 2.0,
-                },
+                origin: NSPoint { x: 0.0, y: 0.0 },
                 size: ns_size,
             },
         };
@@ -462,6 +421,154 @@ fn premultiplied_to_straight(data: &mut [u8]) {
             pixel[0] = (pixel[0] as f32 / a).min(255.0) as u8;
             pixel[1] = (pixel[1] as f32 / a).min(255.0) as u8;
             pixel[2] = (pixel[2] as f32 / a).min(255.0) as u8;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NAMES: [&str; 3] = ["chevron.down", "checkmark", "xmark"];
+
+    type Edges = [f64; 4];
+
+    fn ink_edges(data: &[u8], width: usize, height: usize) -> Option<Edges> {
+        let alpha = |x: usize, y: usize| data[(y * width + x) * 4 + 3] as f64 / 255.0;
+        let column = |x: usize| (0..height).map(|y| alpha(x, y)).fold(0.0, f64::max);
+        let row = |y: usize| (0..width).map(|x| alpha(x, y)).fold(0.0, f64::max);
+        let first = |count: usize, line: &dyn Fn(usize) -> f64| (0..count).find(|i| line(*i) > 0.0);
+        let left = first(width, &column)?;
+        let top = first(height, &row)?;
+        let right = (0..width).rev().find(|x| column(*x) > 0.0)?;
+        let bottom = (0..height).rev().find(|y| row(*y) > 0.0)?;
+        Some([
+            left as f64 + 1.0 - column(left),
+            top as f64 + 1.0 - row(top),
+            right as f64 + column(right),
+            bottom as f64 + row(bottom),
+        ])
+    }
+
+    fn native_edges(
+        name: &str,
+        point_size: f64,
+        scale: f64,
+        symbol_scale: SymbolScale,
+    ) -> Option<(Edges, (usize, usize))> {
+        autoreleasepool(|_| {
+            let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                &NSString::from_str(name),
+                None,
+            )?;
+            let config = NSImageSymbolConfiguration::configurationWithPointSize_weight_scale(
+                point_size,
+                SymbolWeight::Regular.to_ns_weight(),
+                NSImageSymbolScale(symbol_scale.to_ns_scale() as isize),
+            );
+            let image = image.imageWithSymbolConfiguration(&config)?;
+            let size = image.size();
+            let width = (size.width * scale).ceil() as usize;
+            let height = (size.height * scale).ceil() as usize;
+            let color_space = unsafe { objc2_app_kit::NSDeviceRGBColorSpace };
+            let rep = unsafe {
+                NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
+                    NSBitmapImageRep::alloc(),
+                    std::ptr::null_mut(),
+                    width as isize,
+                    height as isize,
+                    8,
+                    4,
+                    true,
+                    false,
+                    color_space,
+                    NSBitmapFormat::empty(),
+                    (width * 4) as isize,
+                    32,
+                )
+            }?;
+            rep.setSize(NSSize {
+                width: width as f64 / scale,
+                height: height as f64 / scale,
+            });
+            let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)?;
+            let old = NSGraphicsContext::currentContext();
+            NSGraphicsContext::setCurrentContext(Some(&context));
+            image.drawInRect_fromRect_operation_fraction(
+                NSRect {
+                    origin: NSPoint { x: 0.0, y: 0.0 },
+                    size,
+                },
+                NSRect {
+                    origin: NSPoint { x: 0.0, y: 0.0 },
+                    size,
+                },
+                NSCompositingOperation::SourceOver,
+                1.0,
+            );
+            NSGraphicsContext::setCurrentContext(old.as_deref());
+            let data = unsafe { std::slice::from_raw_parts(rep.bitmapData(), width * height * 4) };
+            Some((ink_edges(data, width, height)?, (width, height)))
+        })
+    }
+
+    fn our_edges(
+        name: &str,
+        point_size: f32,
+        scale: f32,
+        symbol_scale: SymbolScale,
+    ) -> Option<(Edges, (usize, usize))> {
+        let (width, height, data) = render_sf_symbol(&RenderParams {
+            name,
+            point_size,
+            scale,
+            color: SymbolColor {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            },
+            palette: &[],
+            weight: SymbolWeight::Regular,
+            symbol_scale,
+            rendering_mode: RenderingMode::Monochrome,
+            variable_value: None,
+            rotation_degrees: None,
+        })?;
+        let (width, height) = (width as usize, height as usize);
+        Some((ink_edges(&data, width, height)?, (width, height)))
+    }
+
+    /// The ink of our raster sits where AppKit draws the same symbol at the
+    /// same point size and scale.
+    #[test]
+    fn ink_matches_native_drawing() {
+        if !supports_system_symbols() {
+            return;
+        }
+        let sizes = [9.0, 10.0, 10.5, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0];
+        for symbol_scale in [SymbolScale::Medium, SymbolScale::Small] {
+            for name in NAMES {
+                for scale in [1.0, 2.0] {
+                    for size in sizes {
+                        let (native, native_box) =
+                            native_edges(name, size, scale, symbol_scale).unwrap();
+                        let (ours, our_box) =
+                            our_edges(name, size as f32, scale as f32, symbol_scale).unwrap();
+                        assert_eq!(
+                            our_box, native_box,
+                            "{name} {size}pt {scale}x {symbol_scale:?}: canvas"
+                        );
+                        for (edge, (a, b)) in ours.iter().zip(&native).enumerate() {
+                            assert!(
+                                (a - b).abs() <= 0.3,
+                                "{name} {size}pt {scale}x {symbol_scale:?}: edge {edge} \
+                                 is {a:.2} against native {b:.2}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }
