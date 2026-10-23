@@ -261,6 +261,37 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
         //    Rotated frames use a square canvas sized to the diagonal so the
         //    glyph never clips mid-rotation.
         let ns_size: NSSize = image.size();
+
+        // AppKit reports two horizontal boxes for a symbol. `size` is the
+        // drawing box, rounded up to whole points; `alignmentRect` is the
+        // unrounded box the frameworks lay the symbol out with, and it is the
+        // one SwiftUI centres. They differ by up to half a point, which is a
+        // whole device pixel at 2x — enough to put seven of the twelve glyphs
+        // in the fidelity grid one pixel left of the reference.
+        //
+        // Only the width is taken. The alignment rect's height is a cap-height
+        // band (9pt for every symbol in the grid, regardless of how tall the
+        // glyph draws), not the drawn extent, so using it vertically would
+        // clip badly — and vertical placement already matches the reference.
+        let alignment = image.alignmentRect();
+        let (layout_width, alignment_x) = if alignment.size.width > 0.0
+            && alignment.size.width <= ns_size.width
+            && ns_size.width - alignment.size.width < 1.0
+        {
+            (alignment.size.width, alignment.origin.x)
+        } else {
+            // A symbol whose alignment rect is absent or genuinely different
+            // from its drawing box is not the rounding case this corrects, so
+            // fall back to laying out the drawing box.
+            (ns_size.width, 0.0)
+        };
+
+        // The canvas keeps the *drawing* box's whole-point width. Sizing it to
+        // the alignment box instead would be self-defeating: the element would
+        // then be a half-point wide, and GPUI snaps element bounds to the
+        // device grid, so the half pixel gained by the narrower box is given
+        // straight back by the snap. Keeping whole points makes the snap a
+        // no-op and leaves the half-pixel phase to the draw origin below.
         let base_width = (ns_size.width * scale as f64).ceil();
         let base_height = (ns_size.height * scale as f64).ceil();
         if !base_width.is_finite()
@@ -318,6 +349,22 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
             )
         }?;
 
+        // 6b. Tell the rep its size in POINTS. A bitmap rep created from pixel
+        // dimensions alone reports a point size equal to its pixel size, which
+        // gives the graphics context a backing scale of 1.0 — so a 13pt symbol
+        // asked for at scale 2 gets drawn as a 26pt symbol at 1x rather than a
+        // 13pt symbol at 2x. SF Symbols are optically sized, so those are not
+        // the same picture: strokes, terminals and counters are all redrawn for
+        // the larger size. Measured against SwiftUI at 13pt/medium, the flat-1.0
+        // context put `magnifyingglass` 2.98 device px too wide and
+        // `list.bullet.rectangle` 2.00 px too narrow; with the point size set,
+        // every symbol in the fidelity grid lands within 0.3 px.
+        let canvas_points = NSSize {
+            width: width / scale as f64,
+            height: height / scale as f64,
+        };
+        bitmap_rep.setSize(canvas_points);
+
         // 7. Create NSGraphicsContext and draw
         let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&bitmap_rep)?;
         let old_context = NSGraphicsContext::currentContext();
@@ -327,31 +374,39 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
         //
         // For rotated frames, apply a rotate-about-center transform and draw
         // the glyph centered on the (square, diagonal-sized) canvas.
+        // Every rect below is in POINTS now that the rep carries a point size:
+        // the context maps them onto the device grid at `scale` for us.
         let draw_rect = match rotation {
             Some(deg) => {
                 let transform = NSAffineTransform::transform();
-                transform.translateXBy_yBy(pixel_width as f64 / 2.0, pixel_height as f64 / 2.0);
+                transform.translateXBy_yBy(canvas_points.width / 2.0, canvas_points.height / 2.0);
                 // Negative degrees: clockwise on screen (AppKit's positive
                 // rotation is counterclockwise in its coordinate space).
                 transform.rotateByDegrees(-deg);
                 transform.concat();
                 NSRect {
                     origin: NSPoint {
-                        x: -base_width / 2.0,
-                        y: -base_height / 2.0,
+                        x: -layout_width / 2.0 - alignment_x,
+                        y: -ns_size.height / 2.0,
                     },
-                    size: NSSize {
-                        width: base_width,
-                        height: base_height,
-                    },
+                    size: ns_size,
                 }
             }
+            // Slide the glyph right by the slack between the alignment box and
+            // the drawing box, which lands the alignment box flush against the
+            // canvas's trailing edge. Measured, not derived: rendering the
+            // fidelity grid against SwiftUI at 13pt puts the seven glyphs whose
+            // boxes differ exactly 1.0 device px left at zero shift and exactly
+            // 0.5 px left at half the slack, so the full slack is what closes
+            // it. (AppKit reports these alignment rects with `origin.x` at 0
+            // even when the slack is real, so the rect alone does not say which
+            // side the padding went.)
             None => NSRect {
-                origin: NSPoint { x: 0.0, y: 0.0 },
-                size: NSSize {
-                    width: pixel_width as f64,
-                    height: pixel_height as f64,
+                origin: NSPoint {
+                    x: canvas_points.width - alignment_x - layout_width,
+                    y: (canvas_points.height - ns_size.height) / 2.0,
                 },
+                size: ns_size,
             },
         };
         let from_rect = NSRect {
