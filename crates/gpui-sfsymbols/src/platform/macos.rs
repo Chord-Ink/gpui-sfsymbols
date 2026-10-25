@@ -28,6 +28,10 @@ const MAX_POINT_SIZE: f32 = 1024.0;
 const MAX_SCALE: f32 = 8.0;
 const MAX_PIXEL_DIMENSION: f64 = 16_384.0;
 
+/// How many times finer a moved glyph is drawn: a quarter-pixel move is a
+/// whole pixel there.
+const FINE: usize = 4;
+
 /// Maximum number of palette colors Apple uses (primary, secondary, tertiary).
 pub(crate) const MAX_PALETTE_COLORS: usize = 3;
 
@@ -60,6 +64,12 @@ pub(crate) struct RenderParams<'a> {
     /// Rotation in degrees (clockwise) for bitmap-sampled animation frames.
     /// When set, the canvas grows to the glyph's diagonal so nothing clips.
     pub rotation_degrees: Option<f64>,
+    /// How far the glyph moves right and down, in device pixels, from where
+    /// an offset of zero draws it. Each value is taken modulo 1 and rounded
+    /// to a quarter, and an axis that moves gets one more pixel so the ink
+    /// never clips. `None` draws the glyph where AppKit draws it at `scale`.
+    /// Rotated frames ignore it.
+    pub offset: Option<(f32, f32)>,
 }
 
 /// Whether `+[NSImageSymbolConfiguration configurationWithHierarchicalColor:]`
@@ -289,11 +299,40 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
             }
             None => (base_width, base_height),
         };
+
+        // 5b. Sub-pixel move. AppKit resamples a symbol it draws off the
+        //     pixel grid, which blurs it, so a glyph with an offset is drawn
+        //     at FINE times the scale, where the move is whole pixels, and
+        //     each block is averaged back down: the area coverage of the
+        //     moved outline. AppKit snaps the glyph to the grid it draws on,
+        //     so moves count from the fine drawing at offset zero.
+        let quarter = |value: f32| {
+            if value.is_finite() {
+                (f64::from(value) * FINE as f64)
+                    .round()
+                    .rem_euclid(FINE as f64)
+                    / FINE as f64
+            } else {
+                0.0
+            }
+        };
+        let offset = match (rotation, params.offset) {
+            (None, Some((x, y))) => Some((quarter(x), quarter(y))),
+            _ => None,
+        };
+        let fine = if offset.is_some() { FINE } else { 1 };
+        let offset = offset.unwrap_or((0.0, 0.0));
+        let grow = |moved: f64| if moved > 0.0 { 1.0 } else { 0.0 };
+        let (width, height) = (width + grow(offset.0), height + grow(offset.1));
+        if width * fine as f64 > MAX_PIXEL_DIMENSION || height * fine as f64 > MAX_PIXEL_DIMENSION {
+            return None;
+        }
         let pixel_width = width as u32;
         let pixel_height = height as u32;
-        let bytes_per_row = pixel_width as usize * 4;
-        // pixel_width/pixel_height <= 16_384, so this cannot overflow usize.
-        let data_len = bytes_per_row * pixel_height as usize;
+        let (fine_width, fine_height) = (pixel_width as usize * fine, pixel_height as usize * fine);
+        let bytes_per_row = fine_width * 4;
+        // The fine size is <= 16_384 a side, so this cannot overflow usize.
+        let data_len = bytes_per_row * fine_height;
 
         // 6. Create NSBitmapImageRep for drawing.
         //
@@ -306,8 +345,8 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
             NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
                 NSBitmapImageRep::alloc(),
                 std::ptr::null_mut(),
-                pixel_width as isize,
-                pixel_height as isize,
+                fine_width as isize,
+                fine_height as isize,
                 8,
                 4,
                 true,
@@ -362,9 +401,14 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
                     size: ns_size,
                 }
             }
-            // The glyph sits where AppKit draws it, at its own size.
+            // The glyph sits where AppKit draws it, at its own size, moved
+            // right and down by the offset. AppKit's y axis points up, so
+            // a grown canvas lifts the glyph by a pixel less the move.
             None => NSRect {
-                origin: NSPoint { x: 0.0, y: 0.0 },
+                origin: NSPoint {
+                    x: offset.0 / scale as f64,
+                    y: (grow(offset.1) - offset.1) / scale as f64,
+                },
                 size: ns_size,
             },
         };
@@ -402,12 +446,41 @@ pub(crate) fn render_sf_symbol(params: &RenderParams) -> Option<(u32, u32, Vec<u
             std::ptr::copy_nonoverlapping(bitmap_data, buffer.as_mut_ptr(), data_len);
         }
 
+        if fine > 1 {
+            buffer = downsample(&buffer, pixel_width as usize, pixel_height as usize, fine);
+        }
+
         // 10. Convert premultiplied -> straight alpha (GPUI's Metal renderer,
         //     and this function's documented contract, expect straight alpha).
         premultiplied_to_straight(&mut buffer);
 
         Some((pixel_width, pixel_height, buffer))
     })
+}
+
+/// Averages each `fine` by `fine` block of a premultiplied raster `fine`
+/// times as wide and tall as `width` by `height`.
+fn downsample(data: &[u8], width: usize, height: usize, fine: usize) -> Vec<u8> {
+    let row = width * fine * 4;
+    let count = (fine * fine) as u32;
+    let mut out = vec![0u8; width * height * 4];
+    for y in 0..height {
+        for x in 0..width {
+            let mut sum = [0u32; 4];
+            for dy in 0..fine {
+                let start = (y * fine + dy) * row + x * fine * 4;
+                for pixel in data[start..start + fine * 4].chunks_exact(4) {
+                    for (total, value) in sum.iter_mut().zip(pixel) {
+                        *total += u32::from(*value);
+                    }
+                }
+            }
+            for (channel, total) in out[(y * width + x) * 4..][..4].iter_mut().zip(sum) {
+                *channel = ((total + count / 2) / count) as u8;
+            }
+        }
+    }
+    out
 }
 
 /// Convert premultiplied RGBA to straight (non-premultiplied) RGBA in place,
@@ -518,6 +591,17 @@ mod tests {
         scale: f32,
         symbol_scale: SymbolScale,
     ) -> Option<(Edges, (usize, usize))> {
+        let (data, (width, height)) = our_raster(name, point_size, scale, symbol_scale, None)?;
+        Some((ink_edges(&data, width, height)?, (width, height)))
+    }
+
+    fn our_raster(
+        name: &str,
+        point_size: f32,
+        scale: f32,
+        symbol_scale: SymbolScale,
+        offset: Option<(f32, f32)>,
+    ) -> Option<(Vec<u8>, (usize, usize))> {
         let (width, height, data) = render_sf_symbol(&RenderParams {
             name,
             point_size,
@@ -534,9 +618,72 @@ mod tests {
             rendering_mode: RenderingMode::Monochrome,
             variable_value: None,
             rotation_degrees: None,
+            offset,
         })?;
-        let (width, height) = (width as usize, height as usize);
-        Some((ink_edges(&data, width, height)?, (width, height)))
+        Some((data, (width as usize, height as usize)))
+    }
+
+    /// The middle of the ink, each pixel weighted by its alpha.
+    fn ink_centroid(data: &[u8], width: usize) -> (f64, f64) {
+        let (mut sum, mut x, mut y) = (0.0, 0.0, 0.0);
+        for (ix, pixel) in data.chunks_exact(4).enumerate() {
+            let alpha = f64::from(pixel[3]) / 255.0;
+            sum += alpha;
+            x += alpha * ((ix % width) as f64 + 0.5);
+            y += alpha * ((ix / width) as f64 + 0.5);
+        }
+        (x / sum, y / sum)
+    }
+
+    /// An offset moves the ink right and down by that fraction of a device
+    /// pixel from where an offset of zero draws it, without blurring it, and
+    /// the canvas grows by a pixel on each axis that moves.
+    #[test]
+    fn an_offset_moves_the_ink_by_a_fraction_of_a_pixel() {
+        if !supports_system_symbols() {
+            return;
+        }
+        let sharpness = |data: &[u8]| {
+            let alpha = data.chunks_exact(4).map(|p| f64::from(p[3]) / 255.0);
+            let (sum, squares) = alpha.fold((0.0, 0.0), |(sum, sq), a| (sum + a, sq + a * a));
+            squares / sum
+        };
+        for name in NAMES {
+            for scale in [1.0, 2.0] {
+                let raster = |offset| our_raster(name, 13.0, scale, SymbolScale::Medium, offset);
+                let (direct, direct_size) = raster(None).unwrap();
+                let (base, (width, height)) = raster(Some((0.0, 0.0))).unwrap();
+                assert_eq!(
+                    (width, height),
+                    direct_size,
+                    "{name} {scale}x: canvas at zero"
+                );
+                for (x, y) in [(0.25, 0.0), (0.0, 0.5), (0.75, 0.25), (1.5, -0.25)] {
+                    let (moved, size) = raster(Some((x, y))).unwrap();
+                    let (dx, dy) = (f64::from(x).rem_euclid(1.0), f64::from(y).rem_euclid(1.0));
+                    let grown = |moved: f64| usize::from(moved > 0.0);
+                    assert_eq!(
+                        size,
+                        (width + grown(dx), height + grown(dy)),
+                        "{name} {scale}x {x},{y}: canvas"
+                    );
+                    let (bx, by) = ink_centroid(&base, width);
+                    let (mx, my) = ink_centroid(&moved, size.0);
+                    assert!(
+                        (mx - bx - dx).abs() <= 0.05 && (my - by - dy).abs() <= 0.05,
+                        "{name} {scale}x {x},{y}: the ink moved by {}, {}",
+                        mx - bx,
+                        my - by
+                    );
+                    assert!(
+                        (sharpness(&moved) - sharpness(&direct)).abs() <= 0.04,
+                        "{name} {scale}x {x},{y}: the moved edges are as sharp, {} against {}",
+                        sharpness(&moved),
+                        sharpness(&direct)
+                    );
+                }
+            }
+        }
     }
 
     /// The ink of our raster sits where AppKit draws the same symbol at the

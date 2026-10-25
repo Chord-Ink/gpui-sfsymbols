@@ -234,6 +234,7 @@ pub struct SfSymbol {
     symbol_scale: SymbolScale,
     rendering_mode: RenderingMode,
     variable_value: Option<f64>,
+    offset: Option<(f32, f32)>,
 }
 
 impl SfSymbol {
@@ -251,6 +252,7 @@ impl SfSymbol {
             symbol_scale: SymbolScale::default(),
             rendering_mode: RenderingMode::default(),
             variable_value: None,
+            offset: None,
         }
     }
 
@@ -260,6 +262,21 @@ impl SfSymbol {
     /// rendering return `None`.
     pub fn size(mut self, size: f32) -> Self {
         self.size = size;
+        self
+    }
+
+    /// Move the glyph right by `x` and down by `y` device pixels (default:
+    /// no offset), so a caller can put its ink on the pixel grid. The edges
+    /// stay as sharp as an unmoved glyph's.
+    ///
+    /// A symbol with an offset is drawn on a grid four times finer and
+    /// averaged back down, so the move counts from where `offset(0.0, 0.0)`
+    /// draws it, which can differ from a symbol with no offset by a fraction
+    /// of a pixel. Each value is taken modulo 1 and rounded to a quarter. An
+    /// axis that moves gets one more column or row of pixels, so the ink
+    /// never clips. Rotated animation frames ignore the offset.
+    pub fn offset(mut self, x: f32, y: f32) -> Self {
+        self.offset = Some((x, y));
         self
     }
 
@@ -439,6 +456,7 @@ impl SfSymbol {
             rendering_mode: self.rendering_mode,
             variable_value: self.variable_value,
             rotation_degrees: None,
+            offset: self.offset,
         })
     }
 
@@ -455,6 +473,7 @@ impl SfSymbol {
             rendering_mode: self.rendering_mode,
             variable_value: self.variable_value,
             rotation_degrees: Some(degrees),
+            offset: None,
         })
     }
 
